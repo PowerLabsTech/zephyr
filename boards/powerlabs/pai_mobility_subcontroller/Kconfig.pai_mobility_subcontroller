@@ -1,0 +1,17 @@
+# Copyright (c) 2023 Andreas Sandberg
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_PAI_MOBILITY_SUBCONTROLLER
+	select SOC_STM32G473XX
+
+config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED
+	bool "Enable the RGB led of the subcontroller"
+	default y
+	help
+		Enable the RGB led of the subcontroller by turning the MOSFET connected to the cathode on.
+
+config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED_PRIORITY
+	int "RGB LED priority"
+	default 50
+	help
+	  Priority used for the RGB LED thread. 

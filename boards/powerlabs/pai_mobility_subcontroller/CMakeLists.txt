@@ -1,0 +1,2 @@
+zephyr_library()
+zephyr_library_sources(pai_mobility_subcontroller.c)
