@@ -533,7 +533,7 @@ static int uart_to_can_send_serial_synchronous(const struct device *uart_to_can_
 
 	// int64_t start_time = k_uptime_get();
 	k_timepoint_t end = sys_timepoint_calc(timeout);
-	k_event_clear(&data->sem_event, 0xFF);
+	k_sem_reset(&data->sem);
 	err = send_uart(uart_to_can_dev, msg, msg_len, timeout);
 	if (err != (int)msg_len) {
 		err = -ENODEV;
@@ -541,17 +541,12 @@ static int uart_to_can_send_serial_synchronous(const struct device *uart_to_can_
 	}
 	// timeout = K_MSEC(k_uptime_get() - start_time);
 	timeout = sys_timepoint_timeout(end);
-	err = k_event_wait(&data->sem_event, 0xFF, true, timeout);
-	if (err == 0) {
+	err = k_sem_take(&data->sem, timeout);
+	if (err != 0) {
 		err = -ETIMEDOUT;
 		goto uart_to_can_send_serial_synchronous_return;
-	} else if (err == 0xFF) {
-		err = 0;
-		goto uart_to_can_send_serial_synchronous_return;
-	} else if (err & 0x80) {
-		err = (int8_t)(err & 0xFF);
-		goto uart_to_can_send_serial_synchronous_return;
 	}
+	err = data->response;
 uart_to_can_send_serial_synchronous_return:
 	return err;
 }
@@ -652,11 +647,8 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 		case 'M':
 			if (ring_buf_get_char_to_uint(&data->rx_ring_buffer, 2, 16, &temp_uint)) {
 				response = (uint8_t)(temp_uint & 0xFF);
-				//* 0 in event represent no event so we send 0xFF instead
-				if (response == 0) {
-					response = 0xFF;
-				}
-				k_event_set(&data->sem_event, response);
+				data->response = response;
+				k_sem_give(&data->sem);
 			}
 			break;
 		default:
@@ -766,7 +758,7 @@ static int uart_to_can_reset(const struct device *uart_to_can_dev)
 
 	struct uart_message *temp_msg_ptr;
 
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_reset");
 		goto uart_to_can_reset_return;
@@ -814,7 +806,7 @@ static int uart_to_can_start(const struct device *uart_to_can_dev)
 
 	struct uart_message *temp_msg_ptr;
 
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_start");
 		goto uart_to_can_start_return;
@@ -863,7 +855,7 @@ static int uart_to_can_add_rx_filter(const struct device *uart_to_can_dev,
 
 	// const char *msg = "M0000001000000001\r";
 
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_add_rx_filter");
 		goto uart_to_can_add_rx_filter_return;
@@ -894,7 +886,7 @@ static void uart_to_can_remove_rx_filter(const struct device *uart_to_can_dev, i
 	assert(snprintf(&buffer[1], 3, "%02x", filter_id) == 2);
 	buffer[3] = COMMAND_RESPONSE_OKAY[0];
 
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_remove_rx_filter");
 		goto uart_to_can_remove_rx_filter_return;
@@ -939,7 +931,7 @@ static int uart_to_can_send(const struct device *uart_to_can_dev, const struct c
 		k_msleep(10);
 	}
 
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_send");
 		goto uart_to_can_send_return;
@@ -994,7 +986,7 @@ static int uart_to_can_stop(const struct device *uart_to_can_dev)
 	}
 
 	struct tx_callback_ctx callback_msg;
-	err = k_mutex_lock(&data->inst_mutex, K_MSEC(100));
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
 	if (err != 0) {
 		LOG_ERR("Failed to lock the mutex in uart_to_can_stop");
 		goto uart_to_can_stop_return;
@@ -1031,9 +1023,27 @@ static int uart_to_can_stop(const struct device *uart_to_can_dev)
 uart_to_can_stop_return:
 	return 0;
 }
+#include <zephyr/drivers/gpio.h>
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_NODELABEL(led_gsm), gpios);
+static int uart_to_can_init(const struct device *dev){
+	int ret;
 
-static int uart_to_can_init(const struct device *dev)
-{
+	if (!gpio_is_ready_dt(&led))
+	{
+		return 0;
+	}
+
+	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0)
+	{
+		return 0;
+	}
+	ret = gpio_pin_set_dt(&led, 1);
+	if (ret < 0)
+	{
+		return ret;
+	}
+	k_msleep(5);
 	const struct uart_to_can_config *config = dev->config;
 	const struct device *uart_dev = config->uart_dev;
 	struct uart_to_can_data *data = dev->data;
@@ -1057,7 +1067,7 @@ static int uart_to_can_init(const struct device *dev)
 
 	k_msgq_init(&data->can_tx_mail_box, data->can_tx_mail_box_buffer,
 		    sizeof(struct uart_message *), UART_TO_CAN_NO_MAIL_BOX);
-	k_event_init(&data->sem_event);
+	k_sem_init(&data->sem, 0, 1);
 
 	k_mem_slab_init(&data->can_tx_slab, &data->can_tx_slab_buffer, sizeof(struct uart_message),
 			UART_TO_CAN_NO_MAIL_BOX);
