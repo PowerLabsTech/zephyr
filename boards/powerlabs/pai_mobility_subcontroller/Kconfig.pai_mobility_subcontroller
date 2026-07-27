@@ -10,8 +10,15 @@ config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED
 	help
 		Enable the RGB led of the subcontroller by turning the MOSFET connected to the cathode on.
 
-config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED_PRIORITY
-	int "RGB LED priority"
+config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED_SETUP_PRIORITY
+	int "RGB LED enable pin setup priority"
 	default 50
 	help
-	  Priority used for the RGB LED thread. 
+	  Priority used to setup the enable pin of the RGB LED . 
+
+
+config PAI_MOBILITY_SETUP_TPL5010_PRIORITY
+	int "TPL5010 setup priority"
+	default 5
+	help
+	  Priority used to setup TPL5010 watchdog chip.

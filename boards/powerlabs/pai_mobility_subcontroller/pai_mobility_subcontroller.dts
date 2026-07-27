@@ -50,6 +50,26 @@
 		};
 	};
 
+	tpl5010 {
+		done_pin{
+			compatible = "gpio-leds";
+			status = "okay";
+			tpl5010_done_pin: tpl5010_done_pin {
+				gpios = <&gpioc 15 GPIO_ACTIVE_HIGH>;
+				label = "TPL5010 Done Pin";
+			};
+		};
+
+		wake_pin {
+			compatible = "gpio-keys";
+			status = "okay";
+			tpl5010_wake_pin: tpl5010_wake_pin {
+				gpios = <&gpioc 14 GPIO_ACTIVE_HIGH>;
+				label = "TPL5010 Wake Pin";
+			};
+		};
+	};
+
 	relays {
 		compatible = "gpio-leds";
 		status = "okay";
