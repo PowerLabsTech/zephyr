@@ -7,5 +7,6 @@ menu "Controller Area Network (CAN) bus subsystem"
 
 source "subsys/canbus/Kconfig.canopen"
 source "subsys/canbus/isotp/Kconfig"
+source "subsys/canbus/isotp_runtime_context/Kconfig"
 
 endmenu

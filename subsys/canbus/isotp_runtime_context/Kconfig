@@ -1,0 +1,13 @@
+module = ISOTP_RUNTIME_CONTEXT
+module-str = isotp_runtime_context
+
+config $(module)
+    bool "Enable isotp_runtime_context"
+    default n
+    select ISOTP
+    help
+        Enable isotp_runtime_context
+
+if $(module)
+    source "subsys/logging/Kconfig.template.log_config"
+endif
