@@ -198,7 +198,7 @@ usart_rs485: &usart2 {
 	status = "okay";
 	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
 	pinctrl-names = "default";
-	current-speed = <115200>;
+	current-speed = <9600>;
 	rs485: rs485 {
 		status = "okay";
 		compatible = "zephyr,modbus-serial";

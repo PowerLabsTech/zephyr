@@ -89,7 +89,7 @@ static int startup_tpl5010_watchdog(void)
 		goto startup_tpl5010_watchdog_return;
 	}
 
-	ret = gpio_pin_configure_dt(&tpl5010_done_pin, GPIO_OUTPUT_ACTIVE);
+	ret = gpio_pin_configure_dt(&tpl5010_done_pin, GPIO_OUTPUT_INACTIVE);
 	if (ret < 0) {
 		goto startup_tpl5010_watchdog_return;
 	}

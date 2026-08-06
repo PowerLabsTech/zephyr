@@ -1023,27 +1023,7 @@ static int uart_to_can_stop(const struct device *uart_to_can_dev)
 uart_to_can_stop_return:
 	return 0;
 }
-#include <zephyr/drivers/gpio.h>
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_NODELABEL(led_gsm), gpios);
 static int uart_to_can_init(const struct device *dev){
-	int ret;
-
-	if (!gpio_is_ready_dt(&led))
-	{
-		return 0;
-	}
-
-	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (ret < 0)
-	{
-		return 0;
-	}
-	ret = gpio_pin_set_dt(&led, 1);
-	if (ret < 0)
-	{
-		return ret;
-	}
-	k_msleep(5);
 	const struct uart_to_can_config *config = dev->config;
 	const struct device *uart_dev = config->uart_dev;
 	struct uart_to_can_data *data = dev->data;
