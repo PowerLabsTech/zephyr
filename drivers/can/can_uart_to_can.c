@@ -1023,7 +1023,8 @@ static int uart_to_can_stop(const struct device *uart_to_can_dev)
 uart_to_can_stop_return:
 	return 0;
 }
-static int uart_to_can_init(const struct device *dev){
+static int uart_to_can_init(const struct device *dev)
+{
 	const struct uart_to_can_config *config = dev->config;
 	const struct device *uart_dev = config->uart_dev;
 	struct uart_to_can_data *data = dev->data;
