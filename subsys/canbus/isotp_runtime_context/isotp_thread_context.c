@@ -1,5 +1,5 @@
 #include <zephyr/canbus/isotp_thread_context.h>
-
+#include <zephyr/random/random.h>
 #include <string.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/canbus/isotp.h>
@@ -15,8 +15,11 @@ static int start_isotp_recv(struct isotp_runtime_context *isotp_runtime_ctx)
 	k_mutex_lock(&isotp_runtime_ctx->recv_mutex, K_FOREVER);
 
 	if (isotp_runtime_ctx->is_recv_bound) {
-		LOG_DBG("ISO-TP receive already bound");
-		err = -ENETDOWN;
+		LOG_DBG("context already bounded for %x",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
+		err = 0;
 		goto start_isotp_recv_unlock_mutex;
 	}
 
@@ -24,11 +27,17 @@ static int start_isotp_recv(struct isotp_runtime_context *isotp_runtime_ctx)
 			 &isotp_runtime_ctx->rx_addr, &isotp_runtime_ctx->tx_addr,
 			 &isotp_runtime_ctx->fc_opts_0_5, K_NO_WAIT);
 	if (err != ISOTP_N_OK) {
-		LOG_ERR("Failed to bind to rx ID 0x%x [%d]\n", isotp_runtime_ctx->rx_addr.ext_id,
+		LOG_ERR("Failed to bind to rx ID 0x%x [%d]\n",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id,
 			err);
 		goto start_isotp_recv_unlock_mutex;
 	}
-	LOG_DBG("ISO-TP receive bound to rx ID 0x%x", isotp_runtime_ctx->rx_addr.ext_id);
+	LOG_DBG("ISO-TP receive bound to rx ID 0x%x",
+		isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+			? isotp_runtime_ctx->rx_addr.ext_id
+			: isotp_runtime_ctx->rx_addr.std_id);
 	isotp_runtime_ctx->is_recv_bound = true;
 	k_condvar_signal(&isotp_runtime_ctx->recv_condvar);
 
@@ -65,49 +74,96 @@ stop_isotp_recv_work_handler_return:
 // send_in_progress flag when it is true. The only time the work handler will go through the write
 // path of the send_in_progress flag is when it is false, and the isr will never be called when it
 // is false. Therefore, there is no need for a lock key.
+// Similar logic applies for the timer isr.
 
 static void isotp_send_complete_cb(int error_nr, void *arg)
 {
 	struct isotp_runtime_context *isotp_runtime_ctx = (struct isotp_runtime_context *)arg;
 	if (error_nr != ISOTP_N_OK) {
-		LOG_ERR("TX failed with error [%d]\n Resending", error_nr);
+		LOG_ERR("TX failed with error %d [%s] for len %d", error_nr, strerror(-error_nr),
+			isotp_runtime_ctx->current_send.len);
 	} else {
-		LOG_INF("TX completed successfully");
+		LOG_INF("TX completed successfully for len %d",
+			isotp_runtime_ctx->current_send.len);
 	}
-	isotp_runtime_ctx->last_error_nr = error_nr;
+	isotp_runtime_ctx->last_error_state_nr = error_nr;
 	isotp_runtime_ctx->send_in_progress = false;
 
 	int err = k_work_submit(&isotp_runtime_ctx->work);
 	__ASSERT(err >= 0, "Failed to queue subcontroller send work");
 	ARG_UNUSED(err);
-	LOG_DBG("TX complete work handler");
 }
 
+static void isotp_send_retry_timer_handler(struct k_timer *timer)
+{
+	struct isotp_runtime_context *isotp_runtime_ctx =
+		CONTAINER_OF(timer, struct isotp_runtime_context, send_retry_timer);
+	LOG_DBG("Retry timer expired for isotp runtime context of rx.id 0x%X",
+		isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+			? isotp_runtime_ctx->rx_addr.ext_id
+			: isotp_runtime_ctx->rx_addr.std_id);
+	isotp_runtime_ctx->last_error_state_nr = ISOTP_CONTEXT_RUNTIME_RETRY_READY;
+
+	int err = k_work_submit(&isotp_runtime_ctx->work);
+	__ASSERT(err >= 0, "Failed to queue subcontroller send work");
+	ARG_UNUSED(err);
+}
 static void isotp_runtime_context_work_handler(struct k_work *work)
 {
 	struct isotp_runtime_context *isotp_runtime_ctx =
 		CONTAINER_OF(work, struct isotp_runtime_context, work);
 	int err;
-	bool data_available_to_send = false;
-
+	bool start_receiving = false;
+	int delay_ms;
 	k_mutex_lock(&isotp_runtime_ctx->recv_mutex, K_FOREVER);
 	if (isotp_runtime_ctx->send_in_progress) {
-		LOG_DBG("Send in progress, waiting for completion callback");
+		LOG_DBG("Send in progress, waiting for completion callback for isotp runtime "
+			"context of rx.id 0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		goto isotp_runtime_context_work_handler_unlock;
 	}
 
-	if (isotp_runtime_ctx->last_error_nr != ISOTP_N_OK) {
-		data_available_to_send = true;
-		LOG_WRN("Resending last message for isotp runtime of rx.id  ID 0x%X due to error "
+	if (k_timer_remaining_get(&isotp_runtime_ctx->send_retry_timer) > 0) {
+		LOG_DBG("Retry timer still running for isotp runtime context of rx.id 0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
+		start_receiving = false;
+	} else if (isotp_runtime_ctx->last_error_state_nr == ISOTP_CONTEXT_RUNTIME_RETRY_READY) {
+		start_receiving = true;
+
+		LOG_WRN("Resending last message for isotp runtime of rx.id  ID 0x%X after timeout",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
+	} else if (isotp_runtime_ctx->last_error_state_nr != ISOTP_N_OK) {
+
+		delay_ms = ((CONFIG_ISOTP_BS_TIMEOUT * 2 + (CONFIG_ISOTP_BS_TIMEOUT >> 2)) +
+			    (sys_rand32_get() % (int)(CONFIG_ISOTP_BS_TIMEOUT * 2)));
+		k_timer_start(&isotp_runtime_ctx->send_retry_timer, K_MSEC(delay_ms), K_FOREVER);
+		start_receiving = false;
+		LOG_WRN("Isotp error for isotp runtime of rx.id  sending timer %d for "
+			"retryID 0x%X due to error "
 			"[%d]",
-			isotp_runtime_ctx->rx_addr.ext_id, isotp_runtime_ctx->last_error_nr);
+			delay_ms,
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id,
+			isotp_runtime_ctx->last_error_state_nr);
+		start_receiving = false;
+
 	} else if (k_msgq_get(&isotp_runtime_ctx->send_msgq, &isotp_runtime_ctx->current_send,
 			      K_NO_WAIT) == 0) {
-		data_available_to_send = true;
+		start_receiving = true;
 	}
 
-	if (!data_available_to_send) {
-		LOG_DBG("No more messages to send for isotp context %p", isotp_runtime_ctx);
+	if (!start_receiving) {
+		LOG_DBG("Starting receive on isotp runtime context of rx.id 0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		err = start_isotp_recv(isotp_runtime_ctx);
 		if (err != 0) {
 			goto isotp_runtime_context_work_handler_work_submit;
@@ -118,8 +174,12 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 
 	err = stop_isotp_recv(isotp_runtime_ctx);
 	if (err != 0) {
-		LOG_ERR("Failed to stop ISO-TP receive work handler");
-		isotp_runtime_ctx->last_error_nr = err;
+		LOG_ERR("Failed to stop ISO-TP receive work handler for isotp runtime context of "
+			"rx.id 0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
+		isotp_runtime_ctx->last_error_state_nr = err;
 		goto isotp_runtime_context_work_handler_work_submit;
 	}
 
@@ -129,8 +189,11 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 			 isotp_send_complete_cb, isotp_runtime_ctx);
 	if (err != ISOTP_N_OK) {
 		LOG_ERR("Error while sending data to ID 0x%x [%d]\n",
-			isotp_runtime_ctx->tx_addr.ext_id, err);
-		isotp_runtime_ctx->last_error_nr = err;
+			isotp_runtime_ctx->tx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->tx_addr.ext_id
+				: isotp_runtime_ctx->tx_addr.std_id,
+			err);
+		isotp_runtime_ctx->last_error_state_nr = err;
 		goto isotp_runtime_context_work_handler_work_submit;
 	} else {
 		isotp_runtime_ctx->send_in_progress = true;
@@ -183,7 +246,7 @@ int isotp_runtime_context_init(struct isotp_runtime_context *isotp_runtime_ctx,
 
 	isotp_runtime_ctx->is_recv_bound = false;
 	isotp_runtime_ctx->current_send.len = 0;
-	isotp_runtime_ctx->last_error_nr = ISOTP_N_OK;
+	isotp_runtime_ctx->last_error_state_nr = ISOTP_N_OK;
 	isotp_runtime_ctx->enable_recv = enable_recv;
 	isotp_runtime_ctx->send_in_progress = false;
 
@@ -191,6 +254,7 @@ int isotp_runtime_context_init(struct isotp_runtime_context *isotp_runtime_ctx,
 	__ASSERT(err == 0, "Failed to initialize condvar for isotp_state recv_condvar");
 	(void)err;
 	k_work_init(&isotp_runtime_ctx->work, isotp_runtime_context_work_handler);
+	k_timer_init(&isotp_runtime_ctx->send_retry_timer, isotp_send_retry_timer_handler, NULL);
 
 	k_msgq_init(&isotp_runtime_ctx->send_msgq, (char *)isotp_runtime_ctx->send_msgq_buffer,
 		    sizeof(struct isotp_runtime_context_queued_send),
@@ -220,14 +284,18 @@ int isotp_runtime_context_send(struct isotp_runtime_context *isotp_runtime_ctx,
 	if (!isotp_runtime_ctx || !data || data_len == 0 ||
 	    data_len > CONFIG_ISOTP_RUNTIME_CONTEXT_MAX_SEND_LEN) {
 		LOG_ERR("Invalid parameters for initializing ISO-TP runtime context 0x%X",
-			isotp_runtime_ctx->rx_addr.ext_id);
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		err = -EINVAL;
 		goto send_to_subcontroller_return;
 	}
 
 	if (!isotp_runtime_ctx->initialized) {
 		LOG_ERR("Send runtime not initialized for isotp runtime ID 0x%X",
-			isotp_runtime_ctx->rx_addr.ext_id);
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		err = -EAGAIN;
 		goto send_to_subcontroller_return;
 	}
@@ -237,7 +305,9 @@ int isotp_runtime_context_send(struct isotp_runtime_context *isotp_runtime_ctx,
 	err = k_msgq_put(&isotp_runtime_ctx->send_msgq, &queued_send, timeout);
 	if (err != 0) {
 		LOG_ERR("Failed to queue message for subcontroller ID 0x%02X",
-			isotp_runtime_ctx->rx_addr.ext_id);
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		goto send_to_subcontroller_return;
 	}
 
@@ -256,7 +326,11 @@ int isotp_runtime_context_recv(struct isotp_runtime_context *isotp_runtime_ctx, 
 
 	err = k_mutex_lock(&isotp_runtime_ctx->recv_mutex, timeout);
 	if (err != 0) {
-		LOG_ERR("Failed to lock mutex for isotp_runtime_ctx->recv_mutex");
+		LOG_ERR("Failed to lock mutex for isotp_runtime_ctx->recv_mutex for isotp runtime "
+			"ID 0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		goto isotp_runtime_context_recv_return;
 	}
 	/* block this thread until another thread signals cond. While
@@ -265,12 +339,20 @@ int isotp_runtime_context_recv(struct isotp_runtime_context *isotp_runtime_ctx, 
 	 */
 	while (!isotp_runtime_ctx->is_recv_bound) {
 		timeout = sys_timepoint_timeout(end_time);
-
+		LOG_DBG("ISO-TP receive not bound, waiting for it to be bound for isotp runtime ID "
+			"0x%X",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		err = k_condvar_wait(&isotp_runtime_ctx->recv_condvar,
 				     &isotp_runtime_ctx->recv_mutex, timeout);
-		LOG_DBG("ISO-TP receive not bound, waiting for it to be bound");
 		if (err != 0) {
-			LOG_ERR("Error while waiting for ISO-TP receive to be bound: %d", err);
+			LOG_ERR("Error while waiting for ISO-TP receive to be bound: %d for isotp "
+				"runtime ID 0x%X",
+				err,
+				isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+					? isotp_runtime_ctx->rx_addr.ext_id
+					: isotp_runtime_ctx->rx_addr.std_id);
 			break;
 		}
 	}
@@ -283,7 +365,10 @@ int isotp_runtime_context_recv(struct isotp_runtime_context *isotp_runtime_ctx, 
 
 	err = isotp_recv(&isotp_runtime_ctx->recv_ctx_0_5, data, buf_len, timeout);
 	if (err < 0) {
-		LOG_ERR("Receiving error for paimoc  [%d]\n", err);
+		LOG_ERR("Receiving error for paimoc  [%d] for isotp runtime ID 0x%X", err,
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		goto isotp_runtime_context_recv_return;
 	}
 isotp_runtime_context_recv_return:

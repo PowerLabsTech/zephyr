@@ -5,7 +5,7 @@
 #include <zephyr/canbus/isotp.h>
 
 
-
+#define ISOTP_CONTEXT_RUNTIME_RETRY_READY -200
 struct isotp_runtime_context_queued_send {
 	size_t len;
 	uint8_t data[CONFIG_ISOTP_RUNTIME_CONTEXT_MAX_SEND_LEN];
@@ -21,12 +21,13 @@ struct isotp_runtime_context {
 	struct k_mutex recv_mutex;
 	struct k_work work;
 	struct k_condvar recv_condvar;
+    struct k_timer send_retry_timer;
 
 	struct isotp_send_ctx send_ctx;
 	struct isotp_recv_ctx recv_ctx_0_5;
 
 	struct isotp_runtime_context_queued_send current_send;
-	int last_error_nr;
+	int last_error_state_nr;
 	bool send_in_progress;
 	bool is_recv_bound;
 	bool enable_recv;
