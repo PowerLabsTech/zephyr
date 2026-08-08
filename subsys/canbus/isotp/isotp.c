@@ -539,6 +539,7 @@ static void process_cf(struct isotp_recv_ctx *rctx, struct can_frame *frame)
 		rctx->state = ISOTP_RX_STATE_RECYCLE;
 		*ud_rem_len = 0;
 		k_fifo_put(&rctx->fifo, rctx->buf);
+		receive_state_machine(rctx);
 		return;
 	}
 
