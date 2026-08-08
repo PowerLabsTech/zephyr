@@ -8,6 +8,19 @@ config $(module)
     help
         Enable isotp_runtime_context
 
+config ISOTP_RUNTIME_CONTEXT_MAX_SEND_LEN
+    int "The max data len that can be sent by isotp context"
+    default 50
+    help
+        The max data len that can be sent by isotp context
+
+config ISOTP_RUNTIME_CONTEXT_QUEUE_SIZE
+    int "The number of send  data that can be queue at a time"
+    default 5
+    help
+        The number of send  data that can be queue at a time
+
+
 if $(module)
     source "subsys/logging/Kconfig.template.log_config"
 endif
