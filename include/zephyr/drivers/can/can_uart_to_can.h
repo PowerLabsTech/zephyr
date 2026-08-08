@@ -14,7 +14,7 @@
 #define CAN_ID_11_BIT_BYTE_LENGHT     3
 #define CAN_ID_29_BIT_BYTE_LENGHT     8
 #define UART_TO_CAN_ASYNC_RX_BUF_SIZE 32
-
+#define UART_TO_CAN_FILTER_COUNT      19
 /** @brief Size of the buffer needed to receive a message over UART.
  * 1 for \S
  * 2 for filter id
@@ -22,7 +22,7 @@
  * 8 * 2for data
  * 1 for \r
  */
-#define MAX_UART_CAN_FRAME (1 + CAN_ID_29_BIT_BYTE_LENGHT + 2 + 1 + CAN_MAX_DLEN * 2 + 1)
+#define MAX_UART_CAN_FRAME            (1 + CAN_ID_29_BIT_BYTE_LENGHT + 2 + 1 + CAN_MAX_DLEN * 2 + 1)
 
 struct uart_message {
 	size_t buffer_size;
@@ -79,7 +79,7 @@ struct uart_to_can_data {
 	/** Storage of received ring buffer */
 	uint8_t uart_buf_recv[MAX_UART_CAN_FRAME * 5];
 	/** Array of CAN reception contexts */
-	struct can_rx_ctx rx_cb[19];
+	struct can_rx_ctx rx_cb[UART_TO_CAN_FILTER_COUNT];
 	/** Tx callback message queue */
 	struct k_msgq tx_callback_fifo;
 	/** Storage for the Tx callback message queue */
@@ -114,6 +114,8 @@ struct uart_to_can_data {
 	struct k_mutex inst_mutex;
 
 	struct can_driver_data common;
+	struct k_work rx_work;
+	const struct device *dev;
 };
 
 // /** Reset the external UART to CAN device.

@@ -23,6 +23,14 @@ LOG_MODULE_REGISTER(can_uart_to_can, CONFIG_CAN_LOG_LEVEL);
 #define DT_DRV_COMPAT                   powerlabs_uart_to_can
 #define UART_TO_CAN_ASYNC_RX_TIMEOUT_US 2000
 
+struct k_work_q *uart_to_can_get_work_q(void);
+#ifdef CONFIG_UART_TO_CAN_USE_SYS_WORK_Q
+struct k_work_q *uart_to_can_get_work_q(void)
+{
+	return &k_sys_work_q;
+}
+#endif
+
 static void process_data_uart_data(const struct device *uart_to_can_dev);
 
 static inline uint8_t ring_buf_get_char(struct ring_buf *buf)
@@ -184,7 +192,7 @@ static void process_can_frame(const struct device *uart_to_can_dev, struct can_f
 {
 	struct uart_to_can_data *data = (struct uart_to_can_data *)uart_to_can_dev->data;
 
-	if (data->rx_cb[filter_id].callback != NULL) {
+	if (filter_id < UART_TO_CAN_FILTER_COUNT && data->rx_cb[filter_id].callback != NULL) {
 		data->rx_cb[filter_id].callback(uart_to_can_dev, frame,
 						data->rx_cb[filter_id].user_data);
 	}
@@ -606,10 +614,11 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 	int err = -1;
 	// char response = 0;
 	uint8_t response = 0;
-	unsigned long temp_uint = ring_buf_size_get(&data->rx_ring_buffer);
+	unsigned long temp_uint;
 	//   struct uart_message uart_message;
 	struct can_frame frame;
-	if (temp_uint > 3 && search_r_consider_wrap(&data->rx_ring_buffer) != INT_MIN) {
+	while (ring_buf_size_get(&data->rx_ring_buffer) > 3 &&
+	       search_r_consider_wrap(&data->rx_ring_buffer) != INT_MIN) {
 		uint8_t command = ring_buf_get_char(&data->rx_ring_buffer);
 
 		switch (command) {
@@ -660,6 +669,12 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 	}
 }
 
+static void uart_to_can_rx_work_handler(struct k_work *work)
+{
+	struct uart_to_can_data *data = CONTAINER_OF(work, struct uart_to_can_data, rx_work);
+
+	process_data_uart_data(data->dev);
+}
 static void cb_handler_rx(const struct device *uart_to_can_dev)
 {
 	ARG_UNUSED(uart_to_can_dev);
@@ -669,24 +684,24 @@ static void cb_handler_rx(const struct device *uart_to_can_dev)
 	struct uart_to_can_data *data = (struct uart_to_can_data *)uart_to_can_dev->data;
 
 	int n = 0;
-
+	uint32_t bytes_len;
 	uint8_t *temp_data;
-	while (1) {
-		int bytes_len = ring_buf_put_claim(&data->rx_ring_buffer, &temp_data,
-						   ring_buf_space_get(&data->rx_ring_buffer));
-		if (bytes_len < 1) {
-			n = 0;
-		} else {
-			n = uart_fifo_read(uart_dev, temp_data, bytes_len);
-		}
-		if (ring_buf_put_finish(&data->rx_ring_buffer, n) != 0) {
-			LOG_ERR("Error ring_buf_put_finish");
-		}
-		if (bytes_len < 1 || n < bytes_len) {
-			break;
-		}
+	do {
+		bytes_len = ring_buf_put_claim(&data->rx_ring_buffer, &temp_data,
+					       ring_buf_space_get(&data->rx_ring_buffer));
+
+		n = uart_fifo_read(uart_dev, temp_data, bytes_len);
+
+		ring_buf_put_finish(&data->rx_ring_buffer, n);
+	} while (bytes_len > 0 && n == bytes_len);
+
+	struct k_work_q *work_q = uart_to_can_get_work_q();
+
+	if (work_q == NULL) {
+		work_q = &k_sys_work_q;
 	}
-	process_data_uart_data(uart_to_can_dev);
+
+	(void)k_work_submit_to_queue(work_q, &data->rx_work);
 }
 
 static void cb_handler_tx(const struct device *uart_to_can_dev)
@@ -1028,6 +1043,7 @@ static int uart_to_can_init(const struct device *dev)
 	const struct uart_to_can_config *config = dev->config;
 	const struct device *uart_dev = config->uart_dev;
 	struct uart_to_can_data *data = dev->data;
+	data->dev = dev;
 	int err;
 
 	if (!device_is_ready(uart_dev)) {
@@ -1052,6 +1068,7 @@ static int uart_to_can_init(const struct device *dev)
 
 	k_mem_slab_init(&data->can_tx_slab, &data->can_tx_slab_buffer, sizeof(struct uart_message),
 			UART_TO_CAN_NO_MAIL_BOX);
+	k_work_init(&data->rx_work, uart_to_can_rx_work_handler);
 	k_mutex_init(&data->inst_mutex);
 	data->common.started = false;
 	data->current_msg = NULL;

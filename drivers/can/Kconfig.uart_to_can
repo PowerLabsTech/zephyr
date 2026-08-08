@@ -15,3 +15,10 @@ config CAN_UART_TO_CAN_ASYNC_API
     help
       Use UART asynchronous API for can_uart_to_can.
       When disabled, can_uart_to_can uses UART interrupt-driven API.
+
+config UART_TO_CAN_USE_SYS_WORK_Q
+    bool "Uart to can to use ths system work queue"
+    default y
+    help 
+        Should the work queue used by uart to can be the system q or a user defined work q. Useful for when a systwm that run on the work queue depends on the uart to can.
+        If false, a function "struct k_work_q *uart_to_can_get_work_q(void)" needs to be defined to return a pointer to the work queue to be used. 
