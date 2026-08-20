@@ -612,8 +612,7 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 	struct tx_callback_ctx callback_msg;
 
 	int err = -1;
-	// char response = 0;
-	uint8_t response = 0;
+	int8_t response = 0;
 	unsigned long temp_uint;
 	//   struct uart_message uart_message;
 	struct can_frame frame;
@@ -638,10 +637,10 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 			if (ring_buf_get_char_to_uint(&data->rx_ring_buffer, 2, 16, &temp_uint)) {
 				response = (uint8_t)(temp_uint & 0xFF);
 			}
-			__ASSERT(err != 0xFF, "Something went really wrong with can send");
-			if (response == 0xFF) {
-				LOG_ERR("Something went really wrong with can send");
-			}
+			// __ASSERT(response != -1, "Something went really wrong with can send");
+			// if (response == -1) {
+			// 	LOG_ERR("Something went really wrong with can send");
+			// }
 			if (k_msgq_get(&data->tx_callback_fifo, &callback_msg, K_NO_WAIT) != 0) {
 				LOG_ERR("No call back registered to send data to can callback");
 				break;
@@ -654,8 +653,9 @@ static void process_data_uart_data(const struct device *uart_to_can_dev)
 		case 'f':
 		case 'm':
 		case 'M':
+		case 'S':
 			if (ring_buf_get_char_to_uint(&data->rx_ring_buffer, 2, 16, &temp_uint)) {
-				response = (uint8_t)(temp_uint & 0xFF);
+				response = (int8_t)(temp_uint & 0xFF);
 				data->response = response;
 				k_sem_give(&data->sem);
 			}
@@ -695,6 +695,13 @@ static void cb_handler_rx(const struct device *uart_to_can_dev)
 		ring_buf_put_finish(&data->rx_ring_buffer, n);
 	} while (bytes_len > 0 && n == bytes_len);
 
+	if (bytes_len == 0) {
+		LOG_WRN("RX ring buffer overflow. Clear pending uart data");
+		uint8_t buf[8];
+		do {
+			n = uart_fifo_read(uart_dev, buf, sizeof(buf));
+		} while (n > 0);
+	}
 	struct k_work_q *work_q = uart_to_can_get_work_q();
 
 	if (work_q == NULL) {
@@ -849,6 +856,29 @@ static int uart_to_can_start(const struct device *uart_to_can_dev)
 	k_mutex_unlock(&data->inst_mutex);
 
 uart_to_can_start_return:
+	return err;
+}
+
+static int uart_to_can_set_timing(const struct device *uart_to_can_dev,
+				  const struct can_timing *timing)
+{
+	struct uart_to_can_data *data = (struct uart_to_can_data *)uart_to_can_dev->data;
+	int err;
+	char buffer[1 + 1 + 1];
+	buffer[0] = 'S';
+	assert(snprintf(&buffer[1], 2, "%d", (uint8_t)timing->prescaler) == 1);
+	buffer[2] = COMMAND_RESPONSE_OKAY[0];
+
+	err = k_mutex_lock(&data->inst_mutex, K_MSEC(10000));
+	if (err != 0) {
+		LOG_ERR("Failed to lock the mutex in uart_to_can_set_timing");
+		goto uart_to_can_set_timing_return;
+	}
+	err = uart_to_can_send_serial_synchronous(uart_to_can_dev, buffer, 3, K_MSEC(100));
+
+	k_mutex_unlock(&data->inst_mutex);
+
+uart_to_can_set_timing_return:
 	return err;
 }
 
@@ -1107,15 +1137,6 @@ static int uart_to_can_set_mode(const struct device *dev, can_mode_t mode)
 	return 0;
 }
 
-static int uart_to_can_set_timing(const struct device *dev, const struct can_timing *timing)
-{
-
-	ARG_UNUSED(dev);
-	ARG_UNUSED(timing);
-	LOG_WRN("CAN timing not supported");
-	return 0;
-}
-
 static int uart_to_can_get_capabilities(const struct device *dev, uint32_t *caps)
 {
 	ARG_UNUSED(dev);
@@ -1179,20 +1200,8 @@ static DEVICE_API(can, uart_to_can_driver_api) = {
 	.get_core_clock = uart_to_can_get_core_clock,
 	.get_max_filters = uart_to_can_get_max_filters,
 	/* Recommended configuration ranges from CiA 601-2 */
-	// 	.timing_min = {
-	// 		.sjw = 1,
-	// 		.prop_seg = 0,
-	// 		.phase_seg1 = 2,
-	// 		.phase_seg2 = 2,
-	// 		.prescaler = 1
-	// 	},
-	// 	.timing_max = {
-	// 		.sjw = 128,
-	// 		.prop_seg = 0,
-	// 		.phase_seg1 = 256,
-	// 		.phase_seg2 = 128,
-	// 		.prescaler = 32
-	// 	},
+	.timing_min = {.sjw = 0, .prop_seg = 0, .phase_seg1 = 0, .phase_seg2 = 0, .prescaler = 0},
+	.timing_max = {.sjw = 0, .prop_seg = 0, .phase_seg1 = 0, .phase_seg2 = 0, .prescaler = 8},
 	// #ifdef CONFIG_CAN_FD_MODE
 	// 	.set_timing_data = fake_can_set_timing_data,
 	// 	/* Recommended configuration ranges from CiA 601-2 */

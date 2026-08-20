@@ -77,7 +77,7 @@ struct uart_to_can_data {
 	/** Ring buffer to hold received characters  */
 	struct ring_buf rx_ring_buffer;
 	/** Storage of received ring buffer */
-	uint8_t uart_buf_recv[MAX_UART_CAN_FRAME * 5];
+	uint8_t uart_buf_recv[MAX_UART_CAN_FRAME * CONFIG_CAN_UART_TO_CAN_RX_BUFFER_COUNT];
 	/** Array of CAN reception contexts */
 	struct can_rx_ctx rx_cb[UART_TO_CAN_FILTER_COUNT];
 	/** Tx callback message queue */
@@ -109,7 +109,7 @@ struct uart_to_can_data {
 	/** Semaphore event used to signal when a message response has been received with the
 	 * response return value. */
 	struct k_sem sem;
-	int response;
+	int8_t response;
 
 	struct k_mutex inst_mutex;
 

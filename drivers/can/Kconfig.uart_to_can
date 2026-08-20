@@ -11,7 +11,7 @@ config CAN_UART_TO_CAN
 
 config CAN_UART_TO_CAN_ASYNC_API
     bool "Use UART asynchronous API in can_uart_to_can"
-    depends on CAN_UART_TO_CAN && UART_ASYNC_API
+    depends on UART_ASYNC_API
     help
       Use UART asynchronous API for can_uart_to_can.
       When disabled, can_uart_to_can uses UART interrupt-driven API.
@@ -20,5 +20,11 @@ config UART_TO_CAN_USE_SYS_WORK_Q
     bool "Uart to can to use ths system work queue"
     default y
     help 
-        Should the work queue used by uart to can be the system q or a user defined work q. Useful for when a systwm that run on the work queue depends on the uart to can.
+        Should the work queue used by uart to can be the system q or a user defined work q. Useful for when a system that run on the work queue depends on the uart to can.
         If false, a function "struct k_work_q *uart_to_can_get_work_q(void)" needs to be defined to return a pointer to the work queue to be used. 
+
+config CAN_UART_TO_CAN_RX_BUFFER_COUNT
+    int "Number of uart_to_can_frame to be used"
+    default 20
+    help
+      Number of uart_to_can_frame to be used. The total number of bytes is CAN_UART_TO_CAN_RX_BUFFER_COUNT * MAX_UART_CAN_FRAME.
