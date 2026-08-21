@@ -561,6 +561,7 @@ polaroid	Polaroid Corporation
 portwell	Portwell Inc.
 poslab	Poslab Technology Co., Ltd.
 pov	Point of View International B.V.
+powerlabs	Powerstart Integrated Technology Limited
 powertip	Powertip Tech. Corp.
 powervr	PowerVR (deprecated, use img)
 primux	Primux Trading, S.L.
