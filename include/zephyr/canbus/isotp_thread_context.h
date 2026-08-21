@@ -31,7 +31,7 @@ struct isotp_runtime_context {
 	bool send_in_progress;
 	bool is_recv_bound;
 	bool enable_recv;
-
+	uint8_t retry_count;
 	bool initialized;
 
 	const struct device *can_dev;

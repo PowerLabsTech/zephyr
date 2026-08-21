@@ -76,6 +76,11 @@ stop_isotp_recv_work_handler_return:
 // is false. Therefore, there is no need for a lock key.
 // Similar logic applies for the timer isr.
 
+// For the retry_count, a lock key is ignored because the increment should be atomic, and if it is
+// not, the retry_count will be incremented by 1 more than it should be, which is not a big deal
+// because the retry_count is only used to calculate the delay for the next retry, and if it is
+// incremented by 1 more than it should be, the delay will be longer than it should be, which is not
+// a big deal because it will just delay the next retry by a little bit more.
 static void isotp_send_complete_cb(int error_nr, void *arg)
 {
 	struct isotp_runtime_context *isotp_runtime_ctx = (struct isotp_runtime_context *)arg;
@@ -83,12 +88,12 @@ static void isotp_send_complete_cb(int error_nr, void *arg)
 		LOG_ERR("TX failed with error %d [%s] for len %d", error_nr, strerror(-error_nr),
 			isotp_runtime_ctx->current_send.len);
 	} else {
-		LOG_INF("TX completed successfully for len %d",
-			isotp_runtime_ctx->current_send.len);
+		LOG_INF("TX completed successfully for len %d after %d retries",
+			isotp_runtime_ctx->current_send.len, isotp_runtime_ctx->retry_count);
+		isotp_runtime_ctx->retry_count = 0;
 	}
 	isotp_runtime_ctx->last_error_state_nr = error_nr;
 	isotp_runtime_ctx->send_in_progress = false;
-
 	int err = k_work_submit(&isotp_runtime_ctx->work);
 	__ASSERT(err >= 0, "Failed to queue subcontroller send work");
 	ARG_UNUSED(err);
@@ -113,7 +118,7 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 	struct isotp_runtime_context *isotp_runtime_ctx =
 		CONTAINER_OF(work, struct isotp_runtime_context, work);
 	int err;
-	bool start_receiving = false;
+	bool should_try_resending = false;
 	int delay_ms;
 	k_mutex_lock(&isotp_runtime_ctx->recv_mutex, K_FOREVER);
 	if (isotp_runtime_ctx->send_in_progress) {
@@ -130,9 +135,9 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
 				? isotp_runtime_ctx->rx_addr.ext_id
 				: isotp_runtime_ctx->rx_addr.std_id);
-		start_receiving = false;
+		should_try_resending = false;
 	} else if (isotp_runtime_ctx->last_error_state_nr == ISOTP_CONTEXT_RUNTIME_RETRY_READY) {
-		start_receiving = true;
+		should_try_resending = true;
 
 		LOG_WRN("Resending last message for isotp runtime of rx.id  ID 0x%X after timeout",
 			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
@@ -140,26 +145,29 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 				: isotp_runtime_ctx->rx_addr.std_id);
 	} else if (isotp_runtime_ctx->last_error_state_nr != ISOTP_N_OK) {
 
-		delay_ms = ((CONFIG_ISOTP_BS_TIMEOUT * 2 + (CONFIG_ISOTP_BS_TIMEOUT >> 2)) +
-			    (sys_rand32_get() % (int)(CONFIG_ISOTP_BS_TIMEOUT * 2)));
+		delay_ms = min(CONFIG_ISOTP_BS_TIMEOUT << isotp_runtime_ctx->retry_count++,
+			       5 * 60 * 1000);
+
+		delay_ms += sys_rand32_get() % delay_ms >> 1; // Add a random jitter to the delay to avoid collisions with other subcontrollers
+
 		k_timer_start(&isotp_runtime_ctx->send_retry_timer, K_MSEC(delay_ms), K_FOREVER);
-		start_receiving = false;
-		LOG_WRN("Isotp error for isotp runtime of rx.id  sending timer %d for "
-			"retryID 0x%X due to error "
+		LOG_WRN("Isotp error for isotp runtime of rx.id. Starting retry timer for %dms "
+			"with number of retries %d "
+			"on isotp ID 0x%X due to error "
 			"[%d]",
-			delay_ms,
+			delay_ms, isotp_runtime_ctx->retry_count,
 			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
 				? isotp_runtime_ctx->rx_addr.ext_id
 				: isotp_runtime_ctx->rx_addr.std_id,
 			isotp_runtime_ctx->last_error_state_nr);
-		start_receiving = false;
+		should_try_resending = false;
 
 	} else if (k_msgq_get(&isotp_runtime_ctx->send_msgq, &isotp_runtime_ctx->current_send,
 			      K_NO_WAIT) == 0) {
-		start_receiving = true;
+		should_try_resending = true;
 	}
 
-	if (!start_receiving) {
+	if (!should_try_resending) {
 		LOG_DBG("Starting receive on isotp runtime context of rx.id 0x%X",
 			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
 				? isotp_runtime_ctx->rx_addr.ext_id
@@ -238,7 +246,7 @@ int isotp_runtime_context_init(struct isotp_runtime_context *isotp_runtime_ctx,
 		LOG_ERR("Failed to lock mutex for isotp_state recv_mutex");
 		goto isotp_runtime_context_init_return;
 	}
-
+	isotp_runtime_ctx->retry_count = 0;
 	isotp_runtime_ctx->can_dev = can_dev;
 	isotp_runtime_ctx->rx_addr = *rx_addr;
 	isotp_runtime_ctx->tx_addr = *tx_addr;
