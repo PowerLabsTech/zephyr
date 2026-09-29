@@ -52,11 +52,18 @@ static int stop_isotp_recv(struct isotp_runtime_context *isotp_runtime_ctx)
 
 	int err = k_mutex_lock(&isotp_runtime_ctx->recv_mutex, K_FOREVER);
 	if (err != 0) {
-		LOG_ERR("Failed to lock mutex for isotp_state recv_mutex");
+		LOG_ERR("Failed to lock mutex for isotp_state recv_mutex for rx ID 0x%x [%d]",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id,
+			err);
 		goto stop_isotp_recv_work_handler_return;
 	}
 	if (!isotp_runtime_ctx->is_recv_bound) {
-		LOG_DBG("ISO-TP receive not bound");
+		LOG_DBG("ISO-TP receive not bound for rx ID 0x%x",
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		goto stop_isotp_recv_work_handler_unlock_mutex;
 	}
 
@@ -85,11 +92,19 @@ static void isotp_send_complete_cb(int error_nr, void *arg)
 {
 	struct isotp_runtime_context *isotp_runtime_ctx = (struct isotp_runtime_context *)arg;
 	if (error_nr != ISOTP_N_OK) {
-		LOG_ERR("TX failed with error %d [%s] for len %d", error_nr, strerror(-error_nr),
-			isotp_runtime_ctx->current_send.len);
+		LOG_ERR("TX failed with error %d [%s] for len %d or isotp runtime "
+			"context of rx.id 0x%X",
+			error_nr, strerror(-error_nr), isotp_runtime_ctx->current_send.len,
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 	} else {
-		LOG_INF("TX completed successfully for len %d after %d retries",
-			isotp_runtime_ctx->current_send.len, isotp_runtime_ctx->retry_count);
+		LOG_INF("TX completed successfully for len %d after %d retries for isotp runtime "
+			"context of rx.id 0x%X",
+			isotp_runtime_ctx->current_send.len, isotp_runtime_ctx->retry_count,
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
 		isotp_runtime_ctx->retry_count = 0;
 	}
 	isotp_runtime_ctx->last_error_state_nr = error_nr;
@@ -151,7 +166,7 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 		delay_ms += sys_rand32_get() % delay_ms >> 1; // Add a random jitter to the delay to avoid collisions with other subcontrollers
 
 		k_timer_start(&isotp_runtime_ctx->send_retry_timer, K_MSEC(delay_ms), K_FOREVER);
-		LOG_WRN("Isotp error for isotp runtime of rx.id. Starting retry timer for %dms "
+		LOG_WRN("Isotp error, Starting retry timer for %dms "
 			"with number of retries %d "
 			"on isotp ID 0x%X due to error "
 			"[%d]",
@@ -372,13 +387,6 @@ int isotp_runtime_context_recv(struct isotp_runtime_context *isotp_runtime_ctx, 
 	timeout = sys_timepoint_timeout(end_time);
 
 	err = isotp_recv(&isotp_runtime_ctx->recv_ctx_0_5, data, buf_len, timeout);
-	if (err < 0) {
-		LOG_ERR("Receiving error for paimoc  [%d] for isotp runtime ID 0x%X", err,
-			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
-				? isotp_runtime_ctx->rx_addr.ext_id
-				: isotp_runtime_ctx->rx_addr.std_id);
-		goto isotp_runtime_context_recv_return;
-	}
 isotp_runtime_context_recv_return:
 	return err;
 }
