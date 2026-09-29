@@ -1,0 +1,21 @@
+/dts-v1/;
+
+#include <st/g4/stm32g473Xe.dtsi>
+
+#include "pai_mobility_subcontroller.dtsi"
+
+&flash0 {
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/* 4KiB of storage at the end of the 128KiB FLASH */
+		storage: partition@7ff000 {
+			label = "storage";
+			reg = <0x007ff000 DT_SIZE_K(4)>;
+		};
+};
+
+};

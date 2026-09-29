@@ -3,6 +3,7 @@
 
 config BOARD_PAI_MOBILITY_SUBCONTROLLER
 	select SOC_STM32G473XX
+	select GPIO
 
 config ENABLE_PAI_MOBILITY_SUBCONTROLLER_RGB_LED
 	bool "Enable the RGB led of the subcontroller"

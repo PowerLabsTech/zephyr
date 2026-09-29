@@ -1,11 +1,6 @@
-/*
- * Copyright (c) 2023 Andreas Sandberg
- *
- * SPDX-License-Identifier: Apache-2.0
- */
 
-/dts-v1/;
-#include <st/g4/stm32g473Xb.dtsi>
+
+#include <st/g4/stm32g473.dtsi>
 #include <st/g4/stm32g473v(b-c-e)hx-pinctrl.dtsi>
 
 / {
@@ -17,6 +12,7 @@
 		zephyr,shell-uart = &usart3;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+		// zephyr,settings-partition = &storage;
 	};
 
 	aliases {
@@ -80,6 +76,70 @@
 	};
 };
 
+&i2c2 {
+    status = "okay";
+    pinctrl-0 = <&i2c2_sda_pa8 &i2c2_scl_pa9>;
+    pinctrl-names = "default";
+	tmp1075: tmp1075@48 {
+		compatible = "ti,tmp1075";
+		friendly-name = "texas_temperature_tmp1075";
+		reg = <0x48>;
+		// alert-gpios = <&gpio0 22 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		conversion-rate = <220000>;
+		lower-threshold = <27>;
+		upper-threshold = <28>;
+		consecutive-fault-measurements = <4>;
+	};
+
+	atecc: atecc@60 {
+		compatible = "atmel,atecc508a";
+		reg = <0x60>;
+		status = "okay";
+	};
+
+    ds3231: ds3231@68 {
+        compatible = "maxim,ds3231-mfd";
+        reg = <0x68>;
+        status = "okay";
+
+        ds3231_sensor: ds3231_sensor {
+                compatible = "maxim,ds3231-sensor";
+                status = "okay";
+        };
+
+        ds3231_rtc: ds3231_rtc {
+                compatible = "maxim,ds3231-rtc";
+                status = "okay";
+
+                isw-gpios = <&gpioc 7 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+            //     freq-32khz-gpios = <&gpio0 33 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+        };
+    };
+};
+
+
+
+&spi1 {
+    status = "okay";
+    pinctrl-0 = <&spi1_miso_pa6 &spi1_mosi_pa7 &spi1_sck_pa5>;
+    pinctrl-names = "default";
+    /* CS pin is managed as a GPIO */
+    cs-gpios = <&gpioa 1 GPIO_ACTIVE_LOW>;
+    clock-frequency = <1000000>;
+    sdhc0: sdhc@0 {
+        compatible = "zephyr,sdhc-spi-slot";
+        reg = <0>; // Index of the CS pin in the cs-gpios list
+        status = "okay";
+        mmc {
+            compatible = "zephyr,sdmmc-disk";
+            status = "okay";
+			disk-name = "SD";
+        };
+        spi-max-frequency = <1000000>; // Start at 24MHz
+    };
+};
+
+
 &clk_lsi {
 	status = "okay";
 };
@@ -103,7 +163,7 @@
 &rcc {
 	status = "okay";
 	clocks = <&pll>;
-	clock-frequency = <DT_FREQ_M(144)>;
+	clock-frequency = <DT_FREQ_M(96)>;
 	ahb-prescaler = <1>;
 	apb1-prescaler = <1>;
 	apb2-prescaler = <1>;
@@ -117,7 +177,7 @@
 &pll {
 	status = "okay";
 	div-m = <6>;
-	mul-n = <72>;
+	mul-n = <48>;
 	div-p = <2>;
 	div-q = <6>;
 	div-r = <2>;
@@ -140,19 +200,6 @@ stm32_lp_tick_source: &lptim1 {
 	status = "disabled";
 };
 
-&flash0 {
-	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
-
-		/* 4KiB of storage at the end of the 128KiB FLASH */
-		storage_partition: partition@1f000 {
-			label = "storage";
-			reg = <0x0001f000 DT_SIZE_K(4)>;
-		};
-	};
-};
 
 usart_console: &usart3 {
 	status = "okay";

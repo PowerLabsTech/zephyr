@@ -4,3 +4,6 @@ board:
   vendor: powerlabs
   socs:
     - name: stm32g473xx
+      variants:
+        - name: vb
+        - name: ve
