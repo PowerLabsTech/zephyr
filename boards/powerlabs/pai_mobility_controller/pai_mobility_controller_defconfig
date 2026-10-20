@@ -1,0 +1,10 @@
+#
+# Copyright (c) 2023 Andreas Sandberg
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+CONFIG_CLOCK_CONTROL=y
+
+CONFIG_ARM_MPU=y
+CONFIG_HW_STACK_PROTECTION=y

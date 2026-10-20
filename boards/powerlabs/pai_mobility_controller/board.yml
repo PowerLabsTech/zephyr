@@ -1,0 +1,6 @@
+board:
+  name: pai_mobility_controller
+  full_name: PAI Mobility Controller
+  vendor: powerlabs
+  socs:
+    - name: stm32g473xx
