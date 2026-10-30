@@ -99,7 +99,7 @@ static void isotp_send_complete_cb(int error_nr, void *arg)
 				? isotp_runtime_ctx->rx_addr.ext_id
 				: isotp_runtime_ctx->rx_addr.std_id);
 	} else {
-		LOG_INF("TX completed successfully for len %d after %d retries for isotp runtime "
+		LOG_DBG("TX completed successfully for len %d after %d retries for isotp runtime "
 			"context of rx.id 0x%X",
 			isotp_runtime_ctx->current_send.len, isotp_runtime_ctx->retry_count,
 			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
@@ -180,6 +180,21 @@ static void isotp_runtime_context_work_handler(struct k_work *work)
 	} else if (k_msgq_get(&isotp_runtime_ctx->send_msgq, &isotp_runtime_ctx->current_send,
 			      K_NO_WAIT) == 0) {
 		should_try_resending = true;
+	}
+
+	while (should_try_resending &&
+	       k_uptime_get() - isotp_runtime_ctx->current_send.queued_at >
+		       CONFIG_ISOTP_RUNTIME_CONTEXT_SEND_TTL_MS) {
+		LOG_WRN("Dropping message of len %d queued %lld ms ago for isotp ID 0x%X",
+			isotp_runtime_ctx->current_send.len,
+			(long long)(k_uptime_get() - isotp_runtime_ctx->current_send.queued_at),
+			isotp_runtime_ctx->rx_addr.flags & ISOTP_MSG_IDE
+				? isotp_runtime_ctx->rx_addr.ext_id
+				: isotp_runtime_ctx->rx_addr.std_id);
+		isotp_runtime_ctx->retry_count = 0;
+		isotp_runtime_ctx->last_error_state_nr = ISOTP_N_OK;
+		should_try_resending = k_msgq_get(&isotp_runtime_ctx->send_msgq,
+						  &isotp_runtime_ctx->current_send, K_NO_WAIT) == 0;
 	}
 
 	if (!should_try_resending) {
@@ -324,6 +339,7 @@ int isotp_runtime_context_send(struct isotp_runtime_context *isotp_runtime_ctx,
 	}
 	memcpy(queued_send.data, data, data_len);
 	queued_send.len = data_len;
+	queued_send.queued_at = k_uptime_get();
 
 	err = k_msgq_put(&isotp_runtime_ctx->send_msgq, &queued_send, timeout);
 	if (err != 0) {
@@ -387,6 +403,10 @@ int isotp_runtime_context_recv(struct isotp_runtime_context *isotp_runtime_ctx, 
 	timeout = sys_timepoint_timeout(end_time);
 
 	err = isotp_recv(&isotp_runtime_ctx->recv_ctx_0_5, data, buf_len, timeout);
+	if (err > 0 && k_timer_remaining_get(&isotp_runtime_ctx->send_retry_timer) > 0) {
+		k_timer_stop(&isotp_runtime_ctx->send_retry_timer);
+		isotp_send_retry_timer_handler(&isotp_runtime_ctx->send_retry_timer);
+	}
 isotp_runtime_context_recv_return:
 	return err;
 }

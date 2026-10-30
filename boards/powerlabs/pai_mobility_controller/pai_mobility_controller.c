@@ -33,9 +33,17 @@ send_done_to_tpl5010_watchdog_return:
 	return ret;
 }
 
+__weak bool pai_tpl5010_app_alive(void)
+{
+	return true;
+}
+
 static void tpl5010_wake_work_handler(__maybe_unused struct k_work *work)
 {
-	// Handle the work here
+	if (!pai_tpl5010_app_alive()) {
+		LOG_ERR("Application not making progress, withholding TPL5010 DONE");
+		return;
+	}
 	int ret = send_done_to_tpl5010_watchdog();
 	(void)ret; // Suppress unused variable warning
 	__ASSERT(ret == 0, "Failed to send done signal to TPL5010 watchdog");

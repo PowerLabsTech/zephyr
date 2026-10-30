@@ -8,6 +8,7 @@
 #define ISOTP_CONTEXT_RUNTIME_RETRY_READY -200
 struct isotp_runtime_context_queued_send {
 	size_t len;
+	int64_t queued_at;
 	uint8_t data[CONFIG_ISOTP_RUNTIME_CONTEXT_MAX_SEND_LEN];
 };
 struct isotp_runtime_context;

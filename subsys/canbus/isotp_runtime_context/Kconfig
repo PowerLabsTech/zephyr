@@ -14,6 +14,12 @@ config ISOTP_RUNTIME_CONTEXT_MAX_SEND_LEN
     help
         The max data len that can be sent by isotp context
 
+config ISOTP_RUNTIME_CONTEXT_SEND_TTL_MS
+    int "Milliseconds a queued send stays valid"
+    default 10000
+    help
+    A message that could not be delivered within this time; .
+
 config ISOTP_RUNTIME_CONTEXT_QUEUE_SIZE
     int "The number of send  data that can be queue at a time"
     default 5
